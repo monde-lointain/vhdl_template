@@ -1,17 +1,20 @@
-import cocotb
-from cocotb.triggers import FallingEdge
-from cocotb.queue import QueueEmpty, Queue
 import enum
 import logging
+import cocotb
+from cocotb.clock import Clock
+from cocotb.triggers import FallingEdge
+from cocotb.queue import QueueEmpty, Queue
 import pyuvm
 
 
 # #### The OPS enumeration
 
+
 # Figure 4: The operation enumeration
 @enum.unique
 class Ops(enum.IntEnum):
     """Legal ops for the TinyALU"""
+
     ADD = 1
     AND = 2
     XOR = 3
@@ -19,6 +22,7 @@ class Ops(enum.IntEnum):
 
 
 # #### The alu_prediction function
+
 
 # Figure 5: The prediction function for the scoreboard
 def alu_prediction(A, B, op):
@@ -66,10 +70,11 @@ class TinyAluBfm(metaclass=pyuvm.Singleton):
         self.cmd_mon_queue = Queue(maxsize=0)
         self.result_mon_queue = Queue(maxsize=0)
 
-# ### The reset coroutine
+    # ### The reset coroutine
 
-# Figure 4: Centralizing the reset function
+    # Figure 4: Centralizing the reset function
     async def reset(self):
+        cocotb.start_soon(Clock(self.dut.clk, 2, units="us").start())
         await FallingEdge(self.dut.clk)
         self.dut.reset_n.value = 0
         self.dut.A.value = 0
@@ -79,10 +84,10 @@ class TinyAluBfm(metaclass=pyuvm.Singleton):
         self.dut.reset_n.value = 1
         await FallingEdge(self.dut.clk)
 
-# ## The communication coroutines
-# #### result_mon()
+    # ## The communication coroutines
+    # #### result_mon()
 
-# Figure 6: Monitoring the result bus
+    # Figure 6: Monitoring the result bus
     async def result_mon(self):
         prev_done = 0
         while True:
@@ -93,22 +98,24 @@ class TinyAluBfm(metaclass=pyuvm.Singleton):
                 self.result_mon_queue.put_nowait(result)
             prev_done = done
 
-# #### cmd_mon()
-# Figure 7: Monitoring the command signals
+    # #### cmd_mon()
+    # Figure 7: Monitoring the command signals
     async def cmd_mon(self):
         prev_start = 0
         while True:
             await FallingEdge(self.dut.clk)
             start = get_int(self.dut.start)
             if start == 1 and prev_start == 0:
-                cmd_tuple = (get_int(self.dut.A),
-                             get_int(self.dut.B),
-                             get_int(self.dut.op))
+                cmd_tuple = (
+                    get_int(self.dut.A),
+                    get_int(self.dut.B),
+                    get_int(self.dut.op),
+                )
                 self.cmd_mon_queue.put_nowait(cmd_tuple)
             prev_start = start
 
-# #### driver()
-# Figure 8: Driving commands on the falling edge of clk
+    # #### driver()
+    # Figure 8: Driving commands on the falling edge of clk
     async def cmd_driver(self):
         self.dut.start.value = 0
         self.dut.A.value = 0
@@ -118,8 +125,8 @@ class TinyAluBfm(metaclass=pyuvm.Singleton):
             await FallingEdge(self.dut.clk)
             st = get_int(self.dut.start)
             dn = get_int(self.dut.done)
-# Figure 9: Driving commands to the TinyALU when
-# start and done are 0
+            # Figure 9: Driving commands to the TinyALU when
+            # start and done are 0
             if st == 0 and dn == 0:
                 try:
                     (aa, bb, op) = self.cmd_driver_queue.get_nowait()
@@ -129,29 +136,29 @@ class TinyAluBfm(metaclass=pyuvm.Singleton):
                     self.dut.start.value = 1
                 except QueueEmpty:
                     continue
-# Figure 10: If start is 1 check done
+            # Figure 10: If start is 1 check done
             elif st == 1:
                 if dn == 1:
                     self.dut.start.value = 0
 
-# ### Launching the coroutines using start_soon
-# Figure 11: Start the BFM coroutines
+    # ### Launching the coroutines using start_soon
+    # Figure 11: Start the BFM coroutines
     def start_tasks(self):
         cocotb.start_soon(self.cmd_driver())
         cocotb.start_soon(self.cmd_mon())
         cocotb.start_soon(self.result_mon())
 
-# Figure 12: The get_cmd() coroutine returns the next command
+    # Figure 12: The get_cmd() coroutine returns the next command
     async def get_cmd(self):
         cmd = await self.cmd_mon_queue.get()
         return cmd
 
-# Figure 13: The get_result() coroutine returns the next result
+    # Figure 13: The get_result() coroutine returns the next result
     async def get_result(self):
         result = await self.result_mon_queue.get()
         return result
 
-# Figure 14: send_op puts the command into the command Queue
+    # Figure 14: send_op puts the command into the command Queue
     async def send_op(self, aa, bb, op):
         command_tuple = (aa, bb, op)
         await self.cmd_driver_queue.put(command_tuple)
