@@ -19,45 +19,108 @@ sys.path.insert(0, str(parent_path))
 from tinyalu_utils import TinyAluBfm, Ops, alu_prediction, logger
 
 
-@cocotb.test()
-async def alu_test(dut):
-    """Test all TinyALU operations"""
-    passed = True
+class BaseTester:
+    async def execute(self):
+        self.bfm = TinyAluBfm()
+        ops = list(Ops)
+        for op in ops:
+            aa, bb = self.get_operands()
+            await self.bfm.send_op(aa, bb, op)
+        # Send two dummy operations to allow last real operation to complete
+        await self.bfm.send_op(0, 0, 1)
+        await self.bfm.send_op(0, 0, 1)
 
-    # Create a BFM instance
+
+class RandomTester(BaseTester):
+    def get_operands(self):
+        return random.randint(0, 255), random.randint(0, 255)
+
+
+class MaxTester(BaseTester):
+    def get_operands(self):
+        return 0xFF, 0xFF
+
+
+class Scoreboard:
+    """
+    Provides functionality for gathering data from the DUT, predicting results
+    and comparing actual results to predicted results.
+    """
+
+    def __init__(self):
+        self.bfm = TinyAluBfm()
+        self.cmds = []
+        self.results = []
+        self.cvg = set()
+
+    async def get_cmd(self):
+        while True:
+            cmd = await self.bfm.get_cmd()
+            self.cmds.append(cmd)
+
+    async def get_result(self):
+        while True:
+            result = await self.bfm.get_result()
+            self.results.append(result)
+
+    def start_tasks(self):
+        """Begins the data-gathering tasks for the scoreboard"""
+        cocotb.start_soon(self.get_cmd())
+        cocotb.start_soon(self.get_result())
+
+    def check_results(self):
+        """
+        Checks each result collected by the scorebard, compares each result
+        to the predicted result, and prints the output of the comparison.
+        """
+        passed = True
+        for cmd in self.cmds:
+            aa, bb, op_int = cmd
+            op = Ops(op_int)
+            self.cvg.add(op)
+            actual = self.results.pop(0)
+            prediction = alu_prediction(aa, bb, op)
+            if actual == prediction:
+                logger.info(f"PASSED: {aa:02x} {op.name} {bb:02x} = {actual:04x}")
+            else:
+                logger.error(
+                    f"FAILED: {aa:02x} {op.name} {bb:02x} = {actual:04x} - expected {prediction:04x}"
+                )
+                passed = False
+
+        if len(set(Ops) - self.cvg) > 0:
+            logger.error(f"Functional coverage error. Missed: {set(Ops) - self.cvg}")
+            passed = False
+        else:
+            logger.info("Covered all operations")
+
+        return passed
+
+
+async def execute_test(tester_class):
+    """Runs a test case"""
+    # Initialize the test environment
     bfm = TinyAluBfm()
+    scoreboard = Scoreboard()
     await bfm.reset()
     bfm.start_tasks()
-    cvg = set()
+    scoreboard.start_tasks()
+    # Execute the tester
+    tester = tester_class()
+    await tester.execute()
+    passed = scoreboard.check_results()
+    return passed
 
-    # Create commands with the constrained random parameters and send them to
-    # the ALU
-    ops = list(Ops)
-    for op in ops:
-        aa = random.randint(0, 255)
-        bb = random.randint(0, 255)
-        await bfm.send_op(aa, bb, op)
 
-        # When the command from the DUT arrives, store it in the coverage set
-        seen_cmd = await bfm.get_cmd()
-        seen_op = Ops(seen_cmd[2])
-        cvg.add(seen_op)
+@cocotb.test()
+async def random_test(dut):
+    """Tests random operands"""
+    passed = await execute_test(RandomTester)
+    assert passed
 
-        # Check the result against the predicted value
-        result = await bfm.get_result()
-        expected = alu_prediction(aa, bb, op)
-        if result == expected:
-            logger.info(f"PASSED: {aa:02x} {op.name} {bb:02x} = {result:04x}")
-        else:
-            logger.error(
-                f"FAILED: {aa:02x} {op.name} {bb:02x} = {result:04x} - expected {expected:04x}"
-            )
-            passed = False
 
-    if len(set(Ops) - cvg) > 0:
-        logger.error(f"Functional coverage error. Missed: {set(Ops) - cvg}")
-        passed = False
-    else:
-        logger.info("Covered all operations")
-
+@cocotb.test()
+async def max_test(dut):
+    """Tests maximum operands"""
+    passed = await execute_test(MaxTester)
     assert passed
