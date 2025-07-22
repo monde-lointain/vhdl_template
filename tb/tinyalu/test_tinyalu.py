@@ -1,20 +1,16 @@
 # ## Importing modules
 from pathlib import Path
 import sys  # noqa: E402
-
-
-# Figure 3: Importing needed resources
-import cocotb
-from cocotb.clock import Clock
-from cocotb.triggers import FallingEdge
 import random
 
-# All testbenches use tinyalu_utils, so store it in a central
-# place and add its path to the sys path so we can import it
+import cocotb
+import pyuvm
+from pyuvm import *
+
+# All testbenches use tinyalu_utils, so store it in a central place and add its
+# path to the sys path so we can import it
 parent_path = Path("..").resolve()
 sys.path.insert(0, str(parent_path))
-
-# ### The tinyalu_utils module
 
 from tinyalu_utils import TinyAluBfm, Ops, alu_prediction, logger
 
@@ -97,30 +93,31 @@ class Scoreboard:
         return passed
 
 
-async def execute_test(tester_class):
-    """Runs a test case"""
-    # Initialize the test environment
-    bfm = TinyAluBfm()
-    scoreboard = Scoreboard()
-    await bfm.reset()
-    bfm.start_tasks()
-    scoreboard.start_tasks()
-    # Execute the tester
-    tester = tester_class()
-    await tester.execute()
-    passed = scoreboard.check_results()
-    return passed
+class BaseTest(uvm_test):
+    async def run_phase(self):
+        self.raise_objection()
+        bfm = TinyAluBfm()
+        scoreboard = Scoreboard()
+        await bfm.reset()
+        bfm.start_tasks()
+        scoreboard.start_tasks()
+        await self.tester.execute()
+        passed = scoreboard.check_results()
+        assert passed
+        self.drop_objection()
 
 
-@cocotb.test()
-async def random_test(dut):
-    """Tests random operands"""
-    passed = await execute_test(RandomTester)
-    assert passed
+@pyuvm.test()
+class RandomTest(BaseTest):
+    """Tests with random operations"""
+
+    def build_phase(self):
+        self.tester = RandomTester()
 
 
-@cocotb.test()
-async def max_test(dut):
-    """Tests maximum operands"""
-    passed = await execute_test(MaxTester)
-    assert passed
+@pyuvm.test()
+class MaxTest(BaseTest):
+    """Tests with maximum operands"""
+
+    def build_phase(self):
+        self.tester = MaxTester()
