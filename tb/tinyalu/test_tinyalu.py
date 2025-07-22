@@ -24,6 +24,9 @@ class BaseTester(uvm_component):
         await self.bfm.reset()
         self.bfm.start_tasks()
 
+    def get_operands(self):
+        raise RuntimeError("You must extend BaseTester and override get_operands()")
+
     async def run_phase(self):
         self.raise_objection()
         await self.launch_tb()
@@ -98,27 +101,10 @@ class Scoreboard(uvm_component):
         assert passed
 
 
-class BaseEnv(uvm_env):
-    """Instantiate the scoreboard"""
-
+class AluEnv(uvm_env):
     def build_phase(self):
         self.scoreboard = Scoreboard("scoreboard", self)
-
-
-class RandomEnv(BaseEnv):
-    """Generate random operands"""
-
-    def build_phase(self):
-        super().build_phase()
-        self.tester = RandomTester("tester", self)
-
-
-class MaxEnv(BaseEnv):
-    """Generate maximum operands"""
-
-    def build_phase(self):
-        super().build_phase()
-        self.tester = MaxTester("tester", self)
+        self.tester = BaseTester.create("tester", self)
 
 
 @pyuvm.test()
@@ -126,7 +112,8 @@ class RandomTest(uvm_test):
     """Tests with random operations"""
 
     def build_phase(self):
-        self.env = RandomEnv("env", self)
+        uvm_factory().set_type_override_by_type(BaseTester, RandomTester)
+        self.env = AluEnv("env", self)
 
 
 @pyuvm.test()
@@ -134,4 +121,5 @@ class MaxTest(uvm_test):
     """Tests with maximum operands"""
 
     def build_phase(self):
-        self.env = MaxEnv("env", self)
+        uvm_factory().set_type_override_by_type(BaseTester, MaxTester)
+        self.env = AluEnv("env", self)
